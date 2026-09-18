@@ -5,7 +5,7 @@
 Tempformer generates structural ensembles of a protein at a user-specified temperature by combining evolutionary-conditioning embeddings (AlphaFold / DCA / ESM-2) with an explicit temperature embedding, inside an SE(3) diffusion model built from Evoformer-style pair/single processing and Invariant Point Attention (IPA). Trained jointly across five temperatures (320–450 K) on the [mdCATH](https://github.com/compsciencelab/mdCATH) dataset, the model is constrained by a score–force correspondence to approximate a single, temperature-dependent energy landscape rather than five unrelated distributions per temperature.
 
 <p align="center">
-  <img src="assets/pipeline.jpg" alt="Tempformer pipeline: evolutionary + temperature conditioning into an SE(3) diffusion model, validated against RMSF, secondary structure, TICA, thermostability, and EI allostery" width="900">
+  <img src="assets/pipeline.png" alt="Tempformer pipeline: evolutionary + temperature conditioning into an SE(3) diffusion model, validated against RMSF, secondary structure, TICA, thermostability, and EI allostery" width="900">
 </p>
 
 ## Key results
