@@ -84,7 +84,7 @@ def inference_fn(
     temperature : torch.Tensor (1,) or (B,) in Kelvin (conditioning input)
     """
     device = single_repr.device
-    inference_steps = 1000
+    inference_steps = 500
 
     # --- schedules ---
     t_schedule = np.linspace(1, 0, inference_steps + 1)[:-1]
