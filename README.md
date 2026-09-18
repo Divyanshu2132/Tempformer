@@ -10,7 +10,7 @@ Tempformer generates structural ensembles of a protein at a user-specified tempe
 
 ## Key results
 
-- **Fluctuation amplitudes (RMSF)** across 258 mdCATH test proteins recover experimental/MD-consistent trends at every temperature, with an AlphaFold > DCA > ESM-2 conditioning hierarchy.
+- **Fluctuation amplitudes (RMSF)** across 250 mdCATH test proteins recover experimental/MD-consistent trends at every temperature, with an AlphaFold > DCA > ESM-2 conditioning hierarchy.
 - **Secondary structure** decays non-uniformly along the sequence with temperature, tracking coevolutionary contact stability rather than a single global "disorder" parameter.
 - **TICA / folding-funnel projections** for twelve fast-folding proteins, evaluated at their correct MD simulation temperature, show generated ensembles redistributing into MD-supported high-free-energy basins at high temperature.
 - **Relative thermostability rankings** (Q = 0.4 native-contact threshold, 51-protein benchmark) correlate with experimental melting temperatures (r = 0.52) and correctly order mesophile/hyperthermophile and point-mutant pairs, despite a systematic high bias from finite-simulation training data.
