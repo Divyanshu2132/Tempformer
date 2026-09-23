@@ -184,8 +184,8 @@ for epoch in trange(epochs):
                 val_loss_total += float(output["loss"].item())
     val_loss = val_loss_total / len(val_loader) if len(val_loader) > 0 else float("nan")
 
-    if avg_loss < best_loss:
-        best_loss = avg_loss
+    if val_loss < best_loss:
+        best_loss = val_loss
         torch.save(
             {
                 "epoch": epoch + 1,

@@ -171,14 +171,29 @@ for epoch in trange(epochs):
 
         total_loss += float(loss.item())
     avg_loss = total_loss / len(loader)
-    if avg_loss < best_loss:
-        best_loss = avg_loss
+
+    model.eval()
+    val_loss_total = 0.0
+    with torch.no_grad():
+        for batch in val_loader:
+            for k in list(batch.keys()):
+                v = batch[k]
+                if k in GPU_KEYS and torch.is_tensor(v):
+                    batch[k] = v.to(device, non_blocking=True)
+            with torch.amp.autocast(device_type="cuda", enabled=use_amp):
+                output = model(batch)
+                val_loss_total += float(output["loss"].item())
+    val_loss = val_loss_total / len(val_loader) if len(val_loader) > 0 else float("nan")
+
+    if val_loss < best_loss:
+        best_loss = val_loss
         torch.save(
             {
                 "epoch": epoch + 1,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
                 "loss": avg_loss,
+                "val_loss": val_loss,
             },
             save_path,
         )
@@ -186,4 +201,4 @@ for epoch in trange(epochs):
         c+=1
         # if c==50:
         #     break
-    print(f"Epoch {epoch+1} | avg loss = {avg_loss:.6f} | best = {best_loss:.6f}")
+    print(f"Epoch {epoch+1} | train loss = {avg_loss:.6f} | val loss = {val_loss:.6f} | best = {best_loss:.6f}")
