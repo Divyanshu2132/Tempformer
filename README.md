@@ -1,8 +1,8 @@
 # Tempformer
 
-**A temperature-conditioned diffusion model for generating protein conformational ensembles.**
+**A temperature-conditioned diffusion model for generating full-atom protein conformational ensembles.**
 
-Tempformer generates structural ensembles of a protein at a user-specified temperature by combining evolutionary-conditioning embeddings (AlphaFold / DCA / ESM-2) with an explicit temperature embedding, inside an SE(3) diffusion model built from Evoformer-style pair/single processing and Invariant Point Attention (IPA). Trained jointly across five temperatures (320–450 K) on the [mdCATH](https://github.com/compsciencelab/mdCATH) dataset, the model is constrained by a score–force correspondence to approximate a single, temperature-dependent energy landscape rather than five unrelated distributions per temperature.
+Tempformer generates heavy-atom structural ensembles of a protein at a user-specified temperature. It is an SE(3) diffusion model: residue frames (translations and rotations) and side-chain χ angles are denoised jointly by a stack of Invariant Point Attention (IPA) layers, conditioned on per-protein embeddings (AlphaFold/ColabFold by default, or ESM-2 / DCA) and on the temperature. It is trained jointly across the five temperatures (320–450 K) of the [mdCATH](https://github.com/compsciencelab/mdCATH) dataset.
 
 <p align="center">
   <img src="assets/pipeline.png" alt="Tempformer pipeline: evolutionary + temperature conditioning into an SE(3) diffusion model, validated against RMSF, secondary structure, TICA, thermostability, and EI allostery" width="900">
@@ -16,117 +16,181 @@ Tempformer generates structural ensembles of a protein at a user-specified tempe
 - **Relative thermostability rankings** (Q = 0.4 native-contact threshold, 51-protein benchmark) correlate with experimental melting temperatures (r = 0.52) and correctly order mesophile/hyperthermophile and point-mutant pairs, despite a systematic high bias from finite-simulation training data.
 - **Enzyme I (EI) allostery** is reported as a boundary result: Tempformer captures static multidomain flexibility but not the domain-selective, interdomain coupling that drives genuine allosteric switching — a gap attributed to training on predominantly short, single-domain trajectories.
 
+## Model
+
+**Inputs.** ColabFold single and pair representations (a random rank 1–5 per training sample), amino-acid identity, a relative-position bias, and the Cα distance map of the AlphaFold rank_001 model as template pair features. Two alternative conditionings swap the embeddings:
+
+- **ESM-2** (650M): last-layer residue representation as the single input and the 20 last-layer attention maps as the pair input.
+- **DCA**: mean-field direct information as the pair input, expanded into RBF bins.
+
+**Diffusion.** Continuous time *t* ∈ (0.001, 1] with variance-exploding schedules on the same *t* for:
+
+- translations: Gaussian, σ from 0.1 to 35 Å;
+- rotations: IGSO(3), σ from 0.02 to 1.65;
+- side-chain χ1–χ4: wrapped normal on the circle, σ from 0.03 to π. χ angles with π periodicity are handled.
+
+**Conditioning.** A conditioning vector *c* = MLP(*t*) + MLP(*T*) modulates every IPA layer through adaLN-Zero (zero-initialised shift, scale and gate). It is also added to the single representation.
+
+**Network.** 12 IPA layers (single width 768, pair width 256, 32 heads) feed five heads:
+
+- translation and rotation scores;
+- a χ score;
+- a clean-structure (x₀) backbone update;
+- 7 torsion angles (AlphaFold angle ResNet).
+
+**Output.** Heavy atoms (atom14) are built from AlphaFold rigid groups. The backbone frames and ψ come from the x₀ heads. The χ angles come from the diffusion by default, so side chains vary independently of the backbone, or optionally from the torsion head.
+
+**Loss.** Denoising score matching for frames and χ angles. At low noise (σ_tr < 2 Å) it adds all-atom FAPE, torsion and backbone-bond losses on the x₀ prediction.
+
+**Sampling.** Reverse SDE or probability-flow ODE, with any number of steps (default 100).
+
 ## Repository structure
 
 ```
 Tempformer/
-├── protein/
-│   ├── model/             # Architecture
-│   │   ├── main_model.py          # MainModel: diffusion loop, temperature embedding, loss
-│   │   ├── structure_module.py    # IPA-based structure module
-│   │   ├── attention.py
-│   │   ├── pair_encoder.py
-│   │   ├── positional_encoding.py # Relative position bias
-│   │   ├── so3.py                 # SO(3) noise/score utilities (adapted from DiffDock)
-│   │   ├── geometry.py
-│   │   └── base_model.py
-│   ├── data_provider/
-│   │   ├── dataset.py              # LMDB / NPY dataset wrappers, batching & padding
-│   │   ├── train_loader.py
-│   │   └── util.py
-│   └── common/
-│       ├── config.py                # Training config / job paths
-│       ├── structure_analysis.py    # RMSF, Q(T), α-helix frequency, RMSD, SASA helpers
-│       ├── calc_sasa.py
-│       ├── fixer.py                 # PDBFixer-based structure repair
-│       ├── minimize.py              # OpenMM minimization
-│       ├── aa_vocab.py
-│       ├── logger.py
-│       ├── task_lock.py
-│       └── util.py
-├── run/
-│   ├── train.py                    # Train on AlphaFold single/pair embeddings
-│   ├── train_dca_embeddings.py     # Train on DCA (Potts model) embeddings
-│   ├── train_esm_embeddings.py     # Train on ESM-2 embeddings
-│   ├── inference.py / run_inference.py   # Reverse-diffusion sampling, PDB writing
-│   └── utils.py                    # Shared preprocessing (frames, distances, collation)
-├── analysis_scripts/
-│   ├── Tm.py                           # Native-contact based Tm estimator
-│   ├── compute_Tm_from_native_contacts.py  # Q(T) → Tm pipeline (Q = 0.4 threshold)
-│   ├── tica_fast_folding.py            # TICA fit on MD, projection of generated ensembles
-│   ├── js_divergence_fast_folding.py   # JSD (18×18) & precision (50×50) metrics on TICA landscapes
-│   └── enm_rmsf_correlation.py         # Elastic-network-model RMSF baseline
+├── model/
+│   ├── main_model.py           # MainModel: inputs, time/temperature conditioning, noise schedules, training loss
+│   ├── structure_module.py     # IPA layers with adaLN-Zero; score, x0, torsion and chi heads
+│   ├── residue_geometry.py     # atom14 geometry: frames, torsions, atom placement, FAPE (AlphaFold/OpenFold conventions)
+│   ├── so3.py                  # IGSO(3) sampling and scores (adapted from DiffDock)
+│   ├── torus.py                # wrapped-normal diffusion for side-chain chi angles
+│   ├── attention.py            # attention and feed-forward blocks
+│   ├── geometry.py             # quaternion / axis-angle conversions
+│   └── positional_encoding.py  # relative position bias
+├── data.py                     # mdCATH frames + ColabFold embeddings -> training samples
+├── sampling.py                 # reverse diffusion (SDE/ODE) and ensemble metrics against MD
+├── train.py                    # train on AlphaFold (ColabFold) embeddings
+├── train_esm.py                # train on ESM-2 embeddings
+├── train_dca.py                # train with DCA direct information as the pair input
+├── generate.py                 # sample ensembles for any FASTA, one PDB per structure
+├── generate_ensembles.py       # large ensembles as topology PDB + DCD (chunked, resumable, optional minimization)
+├── evaluate.py                 # score a checkpoint against mdCATH MD (RMSF, native contacts, SS, rotamers)
+├── evaluate_nmr_benchmark.py   # local flexibility and global diversity against experimental NMR ensembles
+├── dual_conformation_sampling.py   # prior-guided sampling on the dual-conformation (fold-switching) benchmark
+├── evaluate_dual_conformation.py   # score those ensembles against both experimental states
+├── ss_melting_tm.py            # melting temperatures from loss of native secondary structure
 ├── data/
-│   ├── AF_alpha_helix_errors.csv / dca_.../ esm_...      # Per-domain, per-temperature α-helix MAE/RMSE/Pearson/Spearman
-│   ├── AF_alpha_helix_profiles.h5 / dca_.../ esm_...     # Per-residue helix profiles
-│   └── spectral_correlations.csv                          # Per-domain RMSF correlation, by conditioning variant
+│   └── splits/                 # make_split.py, make_split_asamt.py: seed-42 train/validation FASTA splits
 └── assets/
-    └── pipeline_figure.svg
+    └── pipeline.png
 ```
 
 ## Installation
 
-Requires Python ≥3.9 and a CUDA-enabled GPU for training (CPU works for inference/analysis on small proteins, but slowly).
+Requires Python ≥ 3.9 and PyTorch ≥ 2.3. Training needs a CUDA GPU (bf16 is used where supported). Sampling also runs on CPU, but slowly.
 
 ```bash
 git clone https://github.com/Divyanshu2132/Tempformer.git
 cd Tempformer
-pip install torch numpy pandas scipy scikit-learn matplotlib tqdm pyyaml h5py \
-            biopython MDAnalysis mdtraj lmdb joblib openmm pdbfixer prody
+pip install torch numpy scipy h5py mdtraj          # training and sampling
+pip install pandas matplotlib biopython            # evaluation and benchmark scripts
 ```
 
-`openmm`, `pdbfixer`, `prody`, and `mdtraj` are only needed for the structure-preparation utilities in `protein/common/` (`fixer.py`, `minimize.py`, `calc_sasa.py`) — training and inference alone need `torch`, `numpy`, `h5py`, `biopython`, and `MDAnalysis`.
+Optional:
 
-> **Note:** several files (`protein/common/fixer.py`, `minimize.py`, `calc_sasa.py`, `structure_analysis.py`, and the `analysis_scripts/*.py` case-study defaults) contain absolute paths to the original HPC environment. Update the `ROOT` / `DATA_DIR` / `BASE` / `GEN_DIR` constants at the top of these files (or pass the equivalent CLI flag, where available) before running elsewhere.
+- **[ColabFold](https://github.com/sokrypton/ColabFold)** computes the input embeddings (see below).
+- **aSAM (`sam2`)** is used for `--minimize` (the same energy minimization applied to aSAMt ensembles) and for the aSAM baselines in `dual_conformation_sampling.py`. It is expected as a checkout next to this repository (`../sam2`), with its own dependencies.
+
+The first import of `model/so3.py` precomputes the IGSO(3) lookup tables once. It caches them as hidden `.so3_*.npy` files in the repository root.
+
+## Inputs
+
+**Embeddings.** Each protein needs its ColabFold outputs: `<name>_single_repr_rank_00K_*.npy`, `<name>_pair_repr_rank_00K_*.npy` and `<name>_unrelaxed_rank_001_*.pdb`. Run:
+
+```bash
+colabfold_batch proteins.fasta colabfold_out/ --save-single-representations --save-pair-representations
+```
+
+Sequence names in the FASTA must match the `<name>` prefix of these files.
+
+The alternative conditionings read the following files:
+
+- ESM-2: `single_<name>.npy` (L × 1280) and `pairwise_<name>.npy` (L × L × 20).
+- DCA: `<name>_pairwise_dca.npy` (L × L × 1).
+
+Both still take the template from the ColabFold rank_001 model unless `--no-template` is given.
+
+**MD frames (training and MD-based evaluation only).** mdCATH HDF5 files, named `mdcath_dataset_<domain>.h5` or `mdcath_snapshots_<domain>.h5`. Snapshot files are preferred when both exist.
+
+**Default locations.** Every path is a command-line option. The defaults are:
+
+- `data/alphafold_embeddings/` for the training FASTA and ColabFold outputs: `train_data.fasta`, `train_embeddings/`, `val_data.fasta`, `val_embeddings/`;
+- a sibling folder `../temp_sim_dataset/` for mdCATH frames (`filtered_train_data/`), ESM-2 and DCA embeddings, and the benchmark sets;
+- `weights/` for checkpoints.
+
+Embeddings, MD data, benchmark sets and trained checkpoints are not included in this repository.
 
 ## Usage
 
 ### Training
 
-Each conditioning variant has its own entry point; all use the same fixed random seed (42), a 500-domain sample split 400 train / 100 validation, and batch size 6:
-
 ```bash
-python run/train.py \
-    --data-dir ./data/mdcath \
-    --embedding-path ./embeddings/alphafold \
-    --save-path ./weights/tempformer_af.pth
+# Smoke test: build the datasets, one training step, one validation batch, one tiny sampling run
+python train.py --check
 
-python run/train_dca_embeddings.py --data-dir ./data/mdcath --embedding-path ./embeddings/dca --save-path ./weights/tempformer_dca.pth
-python run/train_esm_embeddings.py --data-dir ./data/mdcath --embedding-path ./embeddings/esm --save-path ./weights/tempformer_esm.pth
+# AlphaFold (ColabFold) conditioning
+python train.py \
+    --fasta data/splits/tempformer500_train.fasta --val-fasta data/splits/tempformer500_val.fasta \
+    --embedding-path colabfold_out/ --val-embedding-path colabfold_out/ \
+    --data-dirs mdcath/ --save-path weights/tempformer500_af.pth
+
+# ESM-2 and DCA conditioning (defaults: the 500-domain split above); all train.py options apply
+python train_esm.py --embedding-path esm_embeddings/ --val-embedding-path esm_embeddings/ \
+    --template-path colabfold_out/ --data-dirs mdcath/
+python train_dca.py --dca-path dca_embeddings/ --embedding-path colabfold_out/ --val-embedding-path colabfold_out/ \
+    --data-dirs mdcath/
 ```
 
-### Sampling / inference
+Each epoch draws fresh frames: 10 per domain and temperature, each with a random embedding rank and a random 256-residue crop. Training uses AdamW with warmup and cosine decay, an effective batch of 6 × 8 (gradient accumulation) and an EMA of the weights (decay 0.999). Every 5 epochs, ensembles for 10 validation domains are scored against MD at all five temperatures:
+
+score = mean RMSF Pearson r − mean |Q − Q_MD| − mean per-residue SS error − χ1 rotamer error
+
+Checkpoints:
+
+- `weights/<name>.pth`: the best checkpoint by this score, with EMA weights and the model config;
+- `weights/<name>_last.pth`: written every epoch. Training resumes from it automatically (`--no-resume` starts over).
+
+The train/validation FASTA files are written by `data/splits/make_split.py` (`--n 500` → 400 training + 100 validation domains, `--n 1000` → 900 + 100) and `data/splits/make_split_asamt.py` (a split of the aSAMt mdCATH training set). Splits of different sizes made by the same script share the same validation domains.
+
+### Sampling
 
 ```bash
-python run/inference.py \
-    --data-dir ./data/mdcath \
-    --embedding-path ./embeddings/alphafold \
-    --save-path ./weights/tempformer_af.pth
+# One PDB per structure: outputs/<name>_<T>/<name>_<T>_<i>.pdb
+python generate.py --checkpoint weights/tempformer500_af.pth \
+    --fasta proteins.fasta --embedding-path colabfold_out/ \
+    --temperatures 320 348 379 413 450 --num-samples 50 --steps 100 --out-dir outputs/
+
+# Ensembles as <out-dir>/<checkpoint>_epoch<E>/<name>/<name>.<T>.{top.pdb,traj.dcd}
+python generate_ensembles.py --checkpoint weights/tempformer500_af.pth \
+    --fasta proteins.fasta --embedding-path colabfold_out/ \
+    --num-samples 1000 --chunk-size 100 --minimize --out-dir outputs/
 ```
 
-Generates a conformational ensemble via reverse diffusion (500 timesteps) and writes structures to PDB.
+- Any temperature can be requested; training covers 320–450 K.
+- `--sampler ode` uses the probability-flow ODE instead of the SDE.
+- `--chi-source predicted` takes χ angles from the torsion head instead of the diffusion.
+- `generate_ensembles.py` is resume-safe. It can run specific (protein, temperature) pairs with `--systems NAME:T` and split the work over a job array with `--task-id` / `--num-tasks`.
 
-### Analysis
+### Evaluation and benchmarks
 
 ```bash
-# Thermostability (Q = 0.4 native-contact threshold)
-python analysis_scripts/compute_Tm_from_native_contacts.py \
-    --generated-dir <path/to/generated> --mdcath-dir <path/to/mdcath> \
-    --out Tm_correlation.h5 --csv-out Tm_correlation.csv
+# Ensembles for validation domains, scored against mdCATH MD -> evaluation/metrics_history.csv
+python evaluate.py --checkpoint weights/tempformer500_af.pth --fasta data/splits/tempformer500_val.fasta \
+    --embedding-path colabfold_out/ --data-dirs mdcath/ --num-domains 10 --num-samples 50
 
-# TICA / folding-funnel projection for a fast-folding protein
-python analysis_scripts/tica_fast_folding.py --protein Trp-cage --temperature 348 --stride 100 --lag 20
+# NMR ensembles: per-residue RMSF error and ensemble-diversity error (bench: fasta/, native_ensembles/)
+python evaluate_nmr_benchmark.py --bench nmr_benchmark/ --ensembles tempformer=outputs/<run>/ --out-csv nmr.csv
 
-# JSD + precision metrics on the same TICA landscape
-python analysis_scripts/js_divergence_fast_folding.py --protein Trp-cage --temperature 348 --js-bins 18 --precision-bins 50
+# Dual-conformation benchmark: sample from each experimental state, then score against the other state
+python dual_conformation_sampling.py --model tempformer --checkpoint weights/tempformer1000_af.pth \
+    --bench dual_conformation_benchmark/ --out-dir dual_out/
+python evaluate_dual_conformation.py --root dual_out/ --bench dual_conformation_benchmark/ --plot-dir plots/
 
-# Elastic-network-model RMSF baseline
-python analysis_scripts/enm_rmsf_correlation.py --model anm --cutoff 15.0
+# Melting temperatures from the loss of native secondary structure with temperature
+python ss_melting_tm.py --ens-dirs outputs/<run>/ --fasta melting.fasta --ref-dir colabfold_out/ --plot
 ```
 
-## Data
-
-`data/` contains the per-domain, per-temperature secondary-structure error tables and RMSF correlation tables (one set per evolutionary-conditioning variant: AlphaFold, DCA, ESM-2) used to generate Figs. 2 and 3. Raw mdCATH trajectories and generated ensembles are not tracked in this repository due to size.
+Run any script with `--help` for its full list of options.
 
 ## Citation
 
