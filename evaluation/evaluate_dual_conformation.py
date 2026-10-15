@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from dual_conformation_sampling import BENCH, OUT_ROOT, load_target
+from evaluation.dual_conformation_sampling import BENCH, OUT_ROOT, load_target
 
 OTHER = {"fold1": "fold2", "fold2": "fold1"}
 LABELS = {"fold1": "Fold1 prior", "fold2": "Fold2 prior", "af2": "AF2 prior"}

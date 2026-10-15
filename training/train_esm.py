@@ -3,10 +3,10 @@ import os
 import re
 from pathlib import Path
 
-import data as D
-import train
+from data import dataset as D
+from training import train
 
-DATASET = Path(__file__).resolve().parent.parent / "temp_sim_dataset"
+DATASET = Path(__file__).resolve().parents[2] / "temp_sim_dataset"
 
 
 def esm_index(esm_dir, template_dir=None):

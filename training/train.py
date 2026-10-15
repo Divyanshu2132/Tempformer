@@ -10,11 +10,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
-import data as D
+from data import dataset as D
 from model.main_model import MainModel
-from sampling import ensemble_metrics, sample
+from model.sampling import ensemble_metrics, sample
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 LAUNCH_DIR = Path.cwd()
 
 

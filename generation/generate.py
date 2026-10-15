@@ -5,10 +5,10 @@ from pathlib import Path
 import numpy as np
 import torch
 
-import data as D
+from data import dataset as D
 from model import residue_geometry as G
 from model.main_model import MainModel
-from sampling import sample
+from model.sampling import sample
 
 
 def parse_args():

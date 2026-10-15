@@ -8,9 +8,9 @@ import mdtraj as md
 import numpy as np
 import pandas as pd
 
-from evaluate import finished
+from evaluation.evaluate import finished
 
-DATASET = Path(__file__).resolve().parent.parent / "temp_sim_dataset"
+DATASET = Path(__file__).resolve().parents[2] / "temp_sim_dataset"
 BENCH = DATASET / "03_NMR_ensemble_benchmark"
 TF = DATASET / "all_atom_tempformer/NMR_benchmark/tempformer1000_af_epoch175_min"
 METRICS = ["rmsf_mae", "div_err", "div_bias", "rmsf_r"]

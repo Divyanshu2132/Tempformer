@@ -5,8 +5,8 @@ import torch
 from scipy.spatial.transform import Rotation
 from scipy.stats import pearsonr
 
-from model import geometry, so3, torus
-from model import residue_geometry as G
+from . import geometry, so3, torus
+from . import residue_geometry as G
 
 
 @torch.no_grad()

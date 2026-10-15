@@ -7,10 +7,10 @@ import mdtraj as md
 import numpy as np
 import pandas as pd
 
-from data import read_fasta
-from evaluate import finished
+from data.dataset import read_fasta
+from evaluation.evaluate import finished
 
-DATASET = Path(__file__).resolve().parent.parent / "temp_sim_dataset"
+DATASET = Path(__file__).resolve().parents[2] / "temp_sim_dataset"
 MELT = DATASET / "case_study/melting_temperature"
 ENS = DATASET / "all_atom_tempformer"
 

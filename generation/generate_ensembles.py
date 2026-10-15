@@ -10,13 +10,13 @@ from pathlib import Path
 import numpy as np
 import torch
 
-import data as D
-from evaluate import finished, load_checkpoint, minimize_ensemble, write_ensemble
+from data import dataset as D
+from evaluation.evaluate import finished, load_checkpoint, minimize_ensemble, write_ensemble
 from model import residue_geometry as G
 from model.main_model import MainModel
-from sampling import sample
+from model.sampling import sample
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 STALE_LOCK = 3600          # seconds: a join lock this old was left by a task killed while joining
 
 

@@ -1,6 +1,5 @@
 import argparse
 import csv
-import sys
 import time
 import zlib
 from pathlib import Path
@@ -8,14 +7,13 @@ from pathlib import Path
 import numpy as np
 import torch
 
-import data as D
+from data import dataset as D
 from model import residue_geometry as G
 from model.main_model import MainModel
-from sampling import ensemble_metrics, sample
+from model.sampling import ensemble_metrics, sample
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 DATASET = ROOT.parent / "temp_sim_dataset"
-SAM2_SRC = ROOT.parent / "sam2/src"   # aSAMt's minimizer, for --minimize
 
 
 def parse_args():
@@ -37,7 +35,7 @@ def parse_args():
     a("--seed", type=int, default=0)
     a("--sc-weight", type=float, default=1.0, help="chi1 weight in the summary score, as in train.py")
     a("--stable-for", type=int, default=120, help="seconds the checkpoint must be unchanged before loading")
-    a("--out-dir", type=Path, default=ROOT / "evaluation")
+    a("--out-dir", type=Path, default=ROOT / "outputs/evaluation")
     a("--minimize", action="store_true",
       help="also minimize each ensemble as aSAMt's are; written to <checkpoint>_epoch<E>_min and scored there")
     return p.parse_args()
@@ -97,11 +95,9 @@ def finished(top_path, dcd_path):
 
 
 def minimize_ensemble(aatype, top_path, dcd_path, device):
-    """Written ensemble -> atom14 (n, L, 14, 3) in Angstrom after aSAMt's minimizer, with the mdcath protocol that
-    sam2/run_mdcath_test_ensembles.py applies to aSAMt ensembles."""
-    if str(SAM2_SRC) not in sys.path:
-        sys.path.append(str(SAM2_SRC))
-    from sam.minimizer.runner import Minimizer
+    """Written ensemble -> atom14 (n, L, 14, 3) in Angstrom after aSAMt's minimizer (minimizer/), with the mdcath
+    protocol that aSAMt's ensembles are minimized with."""
+    from minimizer.runner import Minimizer
     traj = Minimizer(name=top_path.stem, top_fp=str(top_path), ens_fp=str(dcd_path), protocol="mdcath").run(
         device=device, verbose=False)
     mask = G._C["atom14_mask"][aatype] > 0.5

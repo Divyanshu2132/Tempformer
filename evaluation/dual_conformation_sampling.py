@@ -10,7 +10,7 @@ import numpy as np
 
 from model import residue_geometry as G
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 DATASET = ROOT.parent / "temp_sim_dataset"
 BENCH = DATASET / "01_dual_conformation_benchmark"
 OUT_ROOT = DATASET / "all_atom_tempformer/dual_conformation_benchmark"          # next to NMR_benchmark/, melting/
@@ -235,7 +235,7 @@ def sample_tempformer(model, colabfold, fasta, span, template_ca, template_mask,
     """atom14 (n, L, 14, 3) of the span, conditioned on the rank_001 embeddings (sliced to the span, as the
     training crops are) and the given template CAs."""
     import torch
-    from sampling import sample
+    from model.sampling import sample
     s0, s1 = span
     L = s1 - s0
     aatype = np.array([G.RESTYPES.index(c) for c in fasta[s0:s1]], dtype=np.int64)
@@ -282,9 +282,7 @@ def sample_asam(model, kind, prior_pdb, T, args, seed, out_stem):
 
 
 def minimize(top, dcd, min_top, min_dcd, protocol, device):
-    if str(SAM2 / "src") not in sys.path:
-        sys.path.append(str(SAM2 / "src"))
-    from sam.minimizer.runner import Minimizer
+    from minimizer.runner import Minimizer
     traj = Minimizer(name=top.stem, top_fp=str(top), ens_fp=str(dcd), protocol=protocol).run(device=device, verbose=False)
     min_top.parent.mkdir(parents=True, exist_ok=True)
     traj.save_dcd(str(min_dcd))
@@ -345,7 +343,7 @@ def run_target(target, model, tag, protocol, temps, args, device, epoch):
             if not meta_path.exists():
                 seed_key = f"{args.seed}:{target}:{prior}:{T:g}"
                 if args.model == "tempformer":
-                    from evaluate import write_ensemble
+                    from evaluation.evaluate import write_ensemble
                     ca = np.array([atoms["CA"] for _, atoms in residues])
                     mask = resolved.copy() if args.template == "masked" else np.ones(len(residues), bool)
                     aatype, atoms = sample_tempformer(model, colabfold, fasta, span, ca * mask[:, None], mask, T, args,
