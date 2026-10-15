@@ -1,5 +1,6 @@
 # ref: https://github.com/gcorso/DiffDock/blob/main/utils/so3.py
 import os
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -61,11 +62,13 @@ def _score(exp, omega, eps, L=2000):  # score of density over SO(3)
     return dSigma / exp
 
 
-if os.path.exists(".so3_omegas_array2.npy"):
-    _omegas_array = np.load(".so3_omegas_array2.npy")
-    _cdf_vals = np.load(".so3_cdf_vals2.npy")
-    _score_norms = np.load(".so3_score_norms2.npy")
-    _exp_score_norms = np.load(".so3_exp_score_norms2.npy")
+# lookup tables live in the project root, next to model/ (not in the working directory)
+_TABLE_DIR = Path(__file__).resolve().parent.parent
+if (_TABLE_DIR / ".so3_omegas_array2.npy").exists():
+    _omegas_array = np.load(_TABLE_DIR / ".so3_omegas_array2.npy")
+    _cdf_vals = np.load(_TABLE_DIR / ".so3_cdf_vals2.npy")
+    _score_norms = np.load(_TABLE_DIR / ".so3_score_norms2.npy")
+    _exp_score_norms = np.load(_TABLE_DIR / ".so3_exp_score_norms2.npy")
 else:
     print("Precomputing SO(3) arrays...")
     _eps_array = 10 ** np.linspace(np.log10(MIN_EPS), np.log10(MAX_EPS), N_EPS)
@@ -89,10 +92,10 @@ else:
         / np.pi
     )
 
-    np.save(".so3_omegas_array2.npy", _omegas_array)
-    np.save(".so3_cdf_vals2.npy", _cdf_vals)
-    np.save(".so3_score_norms2.npy", _score_norms)
-    np.save(".so3_exp_score_norms2.npy", _exp_score_norms)
+    np.save(_TABLE_DIR / ".so3_omegas_array2.npy", _omegas_array)
+    np.save(_TABLE_DIR / ".so3_cdf_vals2.npy", _cdf_vals)
+    np.save(_TABLE_DIR / ".so3_score_norms2.npy", _score_norms)
+    np.save(_TABLE_DIR / ".so3_exp_score_norms2.npy", _exp_score_norms)
 
 
 def sample(eps):

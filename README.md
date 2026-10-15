@@ -77,7 +77,7 @@ pip install torch numpy pandas scipy scikit-learn matplotlib tqdm pyyaml h5py \
 
 `openmm`, `pdbfixer`, `prody`, and `mdtraj` are only needed for the structure-preparation utilities in `protein/common/` (`fixer.py`, `minimize.py`, `calc_sasa.py`) — training and inference alone need `torch`, `numpy`, `h5py`, `biopython`, and `MDAnalysis`.
 
-> **Note:** several files (`protein/common/fixer.py`, `minimize.py`, `calc_sasa.py`, `structure_analysis.py`, and the `analysis_scripts/*.py` case-study defaults) contain absolute paths to the original HPC environment (e.g. `/lustre/hdd/LAS/potoyan-lab/...`). Update the `ROOT` / `DATA_DIR` / `BASE` / `GEN_DIR` constants at the top of these files (or pass the equivalent CLI flag, where available) before running elsewhere.
+> **Note:** several files (`protein/common/fixer.py`, `minimize.py`, `calc_sasa.py`, `structure_analysis.py`, and the `analysis_scripts/*.py` case-study defaults) contain absolute paths to the original HPC environment. Update the `ROOT` / `DATA_DIR` / `BASE` / `GEN_DIR` constants at the top of these files (or pass the equivalent CLI flag, where available) before running elsewhere.
 
 ## Usage
 
