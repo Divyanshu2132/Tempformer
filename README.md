@@ -56,24 +56,34 @@ Tempformer/
 │   ├── torus.py                # wrapped-normal diffusion for side-chain chi angles
 │   ├── attention.py            # attention and feed-forward blocks
 │   ├── geometry.py             # quaternion / axis-angle conversions
-│   └── positional_encoding.py  # relative position bias
-├── data.py                     # mdCATH frames + ColabFold embeddings -> training samples
-├── sampling.py                 # reverse diffusion (SDE/ODE) and ensemble metrics against MD
-├── train.py                    # train on AlphaFold (ColabFold) embeddings
-├── train_esm.py                # train on ESM-2 embeddings
-├── train_dca.py                # train with DCA direct information as the pair input
-├── generate.py                 # sample ensembles for any FASTA, one PDB per structure
-├── generate_ensembles.py       # large ensembles as topology PDB + DCD (chunked, resumable, optional minimization)
-├── evaluate.py                 # score a checkpoint against mdCATH MD (RMSF, native contacts, SS, rotamers)
-├── evaluate_nmr_benchmark.py   # local flexibility and global diversity against experimental NMR ensembles
-├── dual_conformation_sampling.py   # prior-guided sampling on the dual-conformation (fold-switching) benchmark
-├── evaluate_dual_conformation.py   # score those ensembles against both experimental states
-├── ss_melting_tm.py            # melting temperatures from loss of native secondary structure
+│   ├── positional_encoding.py  # relative position bias
+│   └── sampling.py             # reverse diffusion (SDE/ODE) and ensemble metrics against MD
 ├── data/
+│   ├── dataset.py              # mdCATH frames + ColabFold embeddings -> training samples and sampling inputs
 │   └── splits/                 # make_split.py, make_split_asamt.py: seed-42 train/validation FASTA splits
+├── training/
+│   ├── train.py                # train on AlphaFold (ColabFold) embeddings
+│   ├── train_esm.py            # train on ESM-2 embeddings
+│   └── train_dca.py            # train with DCA direct information as the pair input
+├── generation/
+│   ├── generate.py             # sample ensembles for any FASTA, one PDB per structure
+│   └── generate_ensembles.py   # large ensembles as topology PDB + DCD (chunked, resumable, optional minimization)
+├── evaluation/
+│   ├── evaluate.py                     # score a checkpoint against mdCATH MD (RMSF, native contacts, SS, rotamers)
+│   ├── evaluate_nmr_benchmark.py       # local flexibility and global diversity against experimental NMR ensembles
+│   ├── dual_conformation_sampling.py   # prior-guided sampling on the dual-conformation (fold-switching) benchmark
+│   ├── evaluate_dual_conformation.py   # score those ensembles against both experimental states
+│   └── ss_melting_tm.py                # melting temperatures from loss of native secondary structure
+├── minimizer/                  # energy minimizer from aSAM (Apache-2.0, see minimizer/LICENSE), used by --minimize
+│   ├── __init__.py             # energy terms (bonds, angles, torsions, clashes) and the minimization loop
+│   ├── runner.py               # Minimizer: minimizes a topology PDB + DCD ensemble in batches
+│   ├── topology.py             # residue tables, atom14 <-> mdtraj conversion
+│   └── params/                 # force-field parameters and the mdcath / atlas protocols
 └── assets/
     └── pipeline.png
 ```
+
+All scripts are run as modules from the repository root, e.g. `python -m training.train`.
 
 ## Installation
 
@@ -82,14 +92,11 @@ Requires Python ≥ 3.9 and PyTorch ≥ 2.3. Training needs a CUDA GPU (bf16 is 
 ```bash
 git clone https://github.com/Divyanshu2132/Tempformer.git
 cd Tempformer
-pip install torch numpy scipy h5py mdtraj          # training and sampling
+pip install torch numpy scipy h5py mdtraj pyyaml   # training, sampling and minimization
 pip install pandas matplotlib biopython            # evaluation and benchmark scripts
 ```
 
-Optional:
-
-- **[ColabFold](https://github.com/sokrypton/ColabFold)** computes the input embeddings (see below).
-- **aSAM (`sam2`)** is used for `--minimize` (the same energy minimization applied to aSAMt ensembles) and for the aSAM baselines in `dual_conformation_sampling.py`. It is expected as a checkout next to this repository (`../sam2`), with its own dependencies.
+[ColabFold](https://github.com/sokrypton/ColabFold) computes the input embeddings (see below).
 
 The first import of `model/so3.py` precomputes the IGSO(3) lookup tables once. It caches them as hidden `.so3_*.npy` files in the repository root.
 
@@ -126,19 +133,19 @@ Embeddings, MD data, benchmark sets and trained checkpoints are not included in 
 
 ```bash
 # Smoke test: build the datasets, one training step, one validation batch, one tiny sampling run
-python train.py --check
+python -m training.train --check
 
 # AlphaFold (ColabFold) conditioning
-python train.py \
+python -m training.train \
     --fasta data/splits/tempformer500_train.fasta --val-fasta data/splits/tempformer500_val.fasta \
     --embedding-path colabfold_out/ --val-embedding-path colabfold_out/ \
     --data-dirs mdcath/ --save-path weights/tempformer500_af.pth
 
-# ESM-2 and DCA conditioning (defaults: the 500-domain split above); all train.py options apply
-python train_esm.py --embedding-path esm_embeddings/ --val-embedding-path esm_embeddings/ \
+# ESM-2 and DCA conditioning (defaults: the 500-domain split above); all training.train options apply
+python -m training.train_esm --embedding-path esm_embeddings/ --val-embedding-path esm_embeddings/ \
     --template-path colabfold_out/ --data-dirs mdcath/
-python train_dca.py --dca-path dca_embeddings/ --embedding-path colabfold_out/ --val-embedding-path colabfold_out/ \
-    --data-dirs mdcath/
+python -m training.train_dca --dca-path dca_embeddings/ --embedding-path colabfold_out/ \
+    --val-embedding-path colabfold_out/ --data-dirs mdcath/
 ```
 
 Each epoch draws fresh frames: 10 per domain and temperature, each with a random embedding rank and a random 256-residue crop. Training uses AdamW with warmup and cosine decay, an effective batch of 6 × 8 (gradient accumulation) and an EMA of the weights (decay 0.999). Every 5 epochs, ensembles for 10 validation domains are scored against MD at all five temperatures:
@@ -156,12 +163,12 @@ The train/validation FASTA files are written by `data/splits/make_split.py` (`--
 
 ```bash
 # One PDB per structure: outputs/<name>_<T>/<name>_<T>_<i>.pdb
-python generate.py --checkpoint weights/tempformer500_af.pth \
+python -m generation.generate --checkpoint weights/tempformer500_af.pth \
     --fasta proteins.fasta --embedding-path colabfold_out/ \
     --temperatures 320 348 379 413 450 --num-samples 50 --steps 100 --out-dir outputs/
 
 # Ensembles as <out-dir>/<checkpoint>_epoch<E>/<name>/<name>.<T>.{top.pdb,traj.dcd}
-python generate_ensembles.py --checkpoint weights/tempformer500_af.pth \
+python -m generation.generate_ensembles --checkpoint weights/tempformer500_af.pth \
     --fasta proteins.fasta --embedding-path colabfold_out/ \
     --num-samples 1000 --chunk-size 100 --minimize --out-dir outputs/
 ```
@@ -169,28 +176,32 @@ python generate_ensembles.py --checkpoint weights/tempformer500_af.pth \
 - Any temperature can be requested; training covers 320–450 K.
 - `--sampler ode` uses the probability-flow ODE instead of the SDE.
 - `--chi-source predicted` takes χ angles from the torsion head instead of the diffusion.
-- `generate_ensembles.py` is resume-safe. It can run specific (protein, temperature) pairs with `--systems NAME:T` and split the work over a job array with `--task-id` / `--num-tasks`.
+- `--minimize` also relaxes every ensemble with the bundled energy minimizer (`minimizer/`, mdcath protocol) and writes it to `<checkpoint>_epoch<E>_min/` in the same layout. With `--no-keep-raw`, only the minimized ensembles are kept.
+- `generation.generate_ensembles` is resume-safe. It can run specific (protein, temperature) pairs with `--systems NAME:T` and split the work over a job array with `--task-id` / `--num-tasks`.
 
 ### Evaluation and benchmarks
 
 ```bash
-# Ensembles for validation domains, scored against mdCATH MD -> evaluation/metrics_history.csv
-python evaluate.py --checkpoint weights/tempformer500_af.pth --fasta data/splits/tempformer500_val.fasta \
+# Ensembles for validation domains, scored against mdCATH MD -> outputs/evaluation/metrics_history.csv
+# (--minimize: minimized ensembles, scored into metrics_history_min.csv)
+python -m evaluation.evaluate --checkpoint weights/tempformer500_af.pth --fasta data/splits/tempformer500_val.fasta \
     --embedding-path colabfold_out/ --data-dirs mdcath/ --num-domains 10 --num-samples 50
 
 # NMR ensembles: per-residue RMSF error and ensemble-diversity error (bench: fasta/, native_ensembles/)
-python evaluate_nmr_benchmark.py --bench nmr_benchmark/ --ensembles tempformer=outputs/<run>/ --out-csv nmr.csv
+python -m evaluation.evaluate_nmr_benchmark --bench nmr_benchmark/ --ensembles tempformer=outputs/<run>/ \
+    --out-csv nmr.csv
 
 # Dual-conformation benchmark: sample from each experimental state, then score against the other state
-python dual_conformation_sampling.py --model tempformer --checkpoint weights/tempformer1000_af.pth \
+python -m evaluation.dual_conformation_sampling --model tempformer --checkpoint weights/tempformer1000_af.pth \
     --bench dual_conformation_benchmark/ --out-dir dual_out/
-python evaluate_dual_conformation.py --root dual_out/ --bench dual_conformation_benchmark/ --plot-dir plots/
+python -m evaluation.evaluate_dual_conformation --root dual_out/ --bench dual_conformation_benchmark/ \
+    --plot-dir plots/
 
 # Melting temperatures from the loss of native secondary structure with temperature
-python ss_melting_tm.py --ens-dirs outputs/<run>/ --fasta melting.fasta --ref-dir colabfold_out/ --plot
+python -m evaluation.ss_melting_tm --ens-dirs outputs/<run>/ --fasta melting.fasta --ref-dir colabfold_out/ --plot
 ```
 
-Run any script with `--help` for its full list of options.
+Run any script with `--help` for its full list of options, e.g. `python -m generation.generate --help`.
 
 ## Citation
 
