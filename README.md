@@ -52,6 +52,7 @@ Tempformer/
 │   ├── main_model.py           # MainModel: inputs, time/temperature conditioning, noise schedules, training loss
 │   ├── structure_module.py     # IPA layers with adaLN-Zero; score, x0, torsion and chi heads
 │   ├── residue_geometry.py     # atom14 geometry: frames, torsions, atom placement, FAPE (AlphaFold/OpenFold conventions)
+│   ├── residue_constants.npz   # residue tables exported from OpenFold, read by residue_geometry.py
 │   ├── so3.py                  # IGSO(3) sampling and scores (adapted from DiffDock)
 │   ├── torus.py                # wrapped-normal diffusion for side-chain chi angles
 │   ├── attention.py            # attention and feed-forward blocks
@@ -60,7 +61,8 @@ Tempformer/
 │   └── sampling.py             # reverse diffusion (SDE/ODE) and ensemble metrics against MD
 ├── data/
 │   ├── dataset.py              # mdCATH frames + ColabFold embeddings -> training samples and sampling inputs
-│   └── splits/                 # make_split.py, make_split_asamt.py: seed-42 train/validation FASTA splits
+│   └── splits/                 # make_split.py, make_split_asamt.py: seed-42 train/validation FASTA splits;
+│                               # make_test_split.py: held-out test domains for the 1000-domain runs
 ├── training/
 │   ├── train.py                # train on AlphaFold (ColabFold) embeddings
 │   ├── train_esm.py            # train on ESM-2 embeddings
@@ -73,6 +75,8 @@ Tempformer/
 │   ├── evaluate_nmr_benchmark.py       # local flexibility and global diversity against experimental NMR ensembles
 │   ├── dual_conformation_sampling.py   # prior-guided sampling on the dual-conformation (fold-switching) benchmark
 │   ├── evaluate_dual_conformation.py   # score those ensembles against both experimental states
+│   ├── evaluate_point_mutation.py      # point-mutation stability: ensemble changes vs experimental ΔΔG
+│   ├── simplefold_nmr_benchmark.py     # SimpleFold baseline ensembles for the NMR benchmark
 │   └── ss_melting_tm.py                # melting temperatures from loss of native secondary structure
 ├── minimizer/                  # energy minimizer from aSAM (Apache-2.0, see minimizer/LICENSE), used by --minimize
 │   ├── __init__.py             # energy terms (bonds, angles, torsions, clashes) and the minimization loop
@@ -96,7 +100,7 @@ pip install torch numpy scipy h5py mdtraj pyyaml   # training, sampling and mini
 pip install pandas matplotlib biopython            # evaluation and benchmark scripts
 ```
 
-[ColabFold](https://github.com/sokrypton/ColabFold) computes the input embeddings (see below).
+[ColabFold](https://github.com/sokrypton/ColabFold) computes the input embeddings (see below). The SimpleFold baseline (`evaluation.simplefold_nmr_benchmark`) runs in a separate environment with [SimpleFold](https://github.com/apple/ml-simplefold) installed.
 
 The first import of `model/so3.py` precomputes the IGSO(3) lookup tables once. It caches them as hidden `.so3_*.npy` files in the repository root.
 
@@ -157,7 +161,7 @@ Checkpoints:
 - `weights/<name>.pth`: the best checkpoint by this score, with EMA weights and the model config;
 - `weights/<name>_last.pth`: written every epoch. Training resumes from it automatically (`--no-resume` starts over).
 
-The train/validation FASTA files are written by `data/splits/make_split.py` (`--n 500` → 400 training + 100 validation domains, `--n 1000` → 900 + 100) and `data/splits/make_split_asamt.py` (a split of the aSAMt mdCATH training set). Splits of different sizes made by the same script share the same validation domains.
+The train/validation FASTA files are written by `data/splits/make_split.py` (`--n 500` → 400 training + 100 validation domains, `--n 1000` → 900 + 100) and `data/splits/make_split_asamt.py` (a split of the aSAMt mdCATH training set). Splits of different sizes made by the same script share the same validation domains. `data/splits/make_test_split.py` writes `tempformer1000_test250.fasta`: the next 250 domains of the same seed-42 draw, never seen by the 1000-domain runs, that have every AF, DCA and ESM-2 input and an mdCATH file.
 
 ### Sampling
 
@@ -176,6 +180,7 @@ python -m generation.generate_ensembles --checkpoint weights/tempformer500_af.pt
 - Any temperature can be requested; training covers 320–450 K.
 - `--sampler ode` uses the probability-flow ODE instead of the SDE.
 - `--chi-source predicted` takes χ angles from the torsion head instead of the diffusion.
+- `generation.generate_ensembles` also samples ESM-2 and DCA checkpoints: `--embeddings esm --esm-path esm_embeddings/` or `--embeddings dca --dca-path dca_embeddings/`. The template still comes from `--embedding-path`. It stops if the embedding widths do not match the checkpoint.
 - `--minimize` also relaxes every ensemble with the bundled energy minimizer (`minimizer/`, mdcath protocol) and writes it to `<checkpoint>_epoch<E>_min/` in the same layout. With `--no-keep-raw`, only the minimized ensembles are kept.
 - `generation.generate_ensembles` is resume-safe. It can run specific (protein, temperature) pairs with `--systems NAME:T` and split the work over a job array with `--task-id` / `--num-tasks`.
 
@@ -199,6 +204,13 @@ python -m evaluation.evaluate_dual_conformation --root dual_out/ --bench dual_co
 
 # Melting temperatures from the loss of native secondary structure with temperature
 python -m evaluation.ss_melting_tm --ens-dirs outputs/<run>/ --fasta melting.fasta --ref-dir colabfold_out/ --plot
+
+# Point-mutation stability: each mutant's change in ensemble ΔG, Q, RMSD and native SS vs experimental ΔΔG
+# (root: system_info.csv, alphafold_embeddings/ and one ensemble folder per model; the first two models are compared)
+python -m evaluation.evaluate_point_mutation --root point_mutation/ --models <run> asamt --temperature 320
+
+# SimpleFold baseline ensembles for the NMR benchmark, in the generate_ensembles layout (SimpleFold environment)
+python -m evaluation.simplefold_nmr_benchmark --bench nmr_benchmark/ --cache simplefold_cache/ --out-dir simplefold_out/
 ```
 
 Run any script with `--help` for its full list of options, e.g. `python -m generation.generate --help`.

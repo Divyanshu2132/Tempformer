@@ -26,6 +26,10 @@ def parse_args():
     a("--checkpoint", type=Path, default=ROOT / "weights/tempformer500_af.pth")
     a("--fasta", type=Path, required=True)
     a("--embedding-path", type=Path, required=True, help="ColabFold output directory of the FASTA's proteins")
+    a("--embeddings", choices=["af", "dca", "esm"], default="af", help="input embeddings the checkpoint was "
+      "trained on")
+    a("--dca-path", type=Path, help="--embeddings dca: <dom>_pairwise_dca.npy files")
+    a("--esm-path", type=Path, help="--embeddings esm: single_<dom>.npy and pairwise_<dom>.npy files")
     a("--temperatures", type=float, nargs="+", default=[320, 348, 379, 413, 450])
     a("--systems", nargs="+", metavar="NAME:T", help="run these (protein, temperature) pairs instead of every "
       "FASTA protein at every --temperatures")
@@ -46,7 +50,33 @@ def parse_args():
     args = p.parse_args()
     if not args.keep_raw and not args.minimize:
         p.error("--no-keep-raw needs --minimize")
+    if args.embeddings == "dca" and not args.dca_path:
+        p.error("--embeddings dca needs --dca-path")
+    if args.embeddings == "esm" and not args.esm_path:
+        p.error("--embeddings esm needs --esm-path")
     return args
+
+
+def embedding_index(args, config):
+    """Embedding files per protein in the form of data.dataset.index_embeddings, built as the checkpoint's training
+    script builds them; stops if their widths are not the checkpoint's (e.g. an ESM checkpoint given --embeddings af)."""
+    if args.embeddings == "dca":
+        from training.train_dca import dca_index
+        emb = dca_index(args.embedding_path, args.dca_path)
+    elif args.embeddings == "esm":
+        from training.train_esm import esm_index
+        emb = esm_index(args.esm_path, args.embedding_path)
+    else:
+        emb = D.index_embeddings(args.embedding_path)
+    entry = next((e for e in emb.values() if e["ranks"]), None)
+    if entry:
+        files = entry["ranks"][min(entry["ranks"])]
+        widths = tuple(int(np.load(files[k], mmap_mode="r").shape[-1]) for k in ("single", "pair"))
+        if widths != (config["input_shape"], config["pair_shape"]):
+            raise SystemExit(f"{args.checkpoint.name} takes single/pair embeddings of width "
+                             f"{config['input_shape']}/{config['pair_shape']}, --embeddings {args.embeddings} "
+                             f"gives {widths[0]}/{widths[1]}")
+    return emb
 
 
 def join_chunks(folder, name, n_chunks):
@@ -101,7 +131,7 @@ def main():
     min_dir = run_dir.with_name(run_dir.name + "_min")
 
     seqs = D.read_fasta(args.fasta)
-    emb = D.index_embeddings(args.embedding_path)
+    emb = embedding_index(args, ckpt["config"])
     if args.systems:
         systems = [(s.rsplit(":", 1)[0], float(s.rsplit(":", 1)[1])) for s in args.systems]
         missing = sorted({dom for dom, _ in systems if dom not in seqs})
